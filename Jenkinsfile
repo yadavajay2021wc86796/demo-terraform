@@ -1,6 +1,14 @@
 pipeline {
     agent any
 
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['plan', 'apply', 'destroy'],
+            description: 'Select the Terraform action to execute'
+        )
+    }
+
     environment {
         AWS_ACCESS_KEY_ID     = credentials('aws-access-key')
         AWS_SECRET_ACCESS_KEY = credentials('aws-secret-key')
@@ -26,18 +34,36 @@ pipeline {
         }
 
         stage('Terraform Plan') {
+            when {
+                expression { params.ACTION == 'plan' || params.ACTION == 'apply' }
+            }
             steps {
                 sh 'terraform plan -input=false -out=tfplan'
             }
         }
 
-        stage('Approval') {
+        stage('Terraform Destroy Plan') {
+            when {
+                expression { params.ACTION == 'destroy' }
+            }
             steps {
-                input message: 'Approve Terraform Apply?', ok: 'Approve'
+                sh 'terraform plan -destroy -input=false -out=tfplan'
             }
         }
 
-        stage('Terraform Apply') {
+        stage('Approval') {
+            when {
+                expression { params.ACTION == 'apply' || params.ACTION == 'destroy' }
+            }
+            steps {
+                input message: "Approve Terraform ${params.ACTION.toUpperCase()}?", ok: 'Approve'
+            }
+        }
+
+        stage('Terraform Apply / Destroy') {
+            when {
+                expression { params.ACTION == 'apply' || params.ACTION == 'destroy' }
+            }
             steps {
                 sh 'terraform apply -input=false -auto-approve tfplan'
             }
@@ -45,11 +71,14 @@ pipeline {
     }
 
     post {
+        always {
+            sh 'rm -f tfplan'
+        }
         success {
-            echo 'S3 bucket created successfully!'
+            echo "Terraform ${params.ACTION} completed successfully!"
         }
         failure {
-            echo 'Pipeline failed!'
+            echo "Pipeline failed during ${params.ACTION}!"
         }
     }
 }
